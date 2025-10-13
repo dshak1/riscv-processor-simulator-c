@@ -66,6 +66,9 @@ void execute_rtype(Instruction instruction, Processor *processor) {
                   break;
                 case 0x20:
                     // Sub
+                    processor->R[instruction.rtype.rd] =
+                        ((sWord)processor->R[instruction.rtype.rs1]) -
+                        ((sWord)processor->R[instruction.rtype.rs2]);
                     break;
                 default:
                     handle_invalid_instruction(instruction);
@@ -77,22 +80,45 @@ void execute_rtype(Instruction instruction, Processor *processor) {
             switch (instruction.rtype.funct7) {
                 case 0x0:
                     // SLL
+                    processor->R[instruction.rtype.rd] =
+                        processor->R[instruction.rtype.rs1] << 
+                        (processor->R[instruction.rtype.rs2] & 0x1F);
                     break;
                 case 0x1:
                     // MULH
+                    {
+                        sDouble result = (sDouble)((sWord)processor->R[instruction.rtype.rs1]) * 
+                                        (sDouble)((sWord)processor->R[instruction.rtype.rs2]);
+                        processor->R[instruction.rtype.rd] = (Word)(result >> 32);
+                    }
                     break;
             }
             break;
         case 0x2:
             // SLT
+            processor->R[instruction.rtype.rd] = 
+                ((sWord)processor->R[instruction.rtype.rs1] < 
+                 (sWord)processor->R[instruction.rtype.rs2]) ? 1 : 0;
             break;
         case 0x4:
             switch (instruction.rtype.funct7) {
                 case 0x0:
                     // XOR
+                    processor->R[instruction.rtype.rd] =
+                        processor->R[instruction.rtype.rs1] ^
+                        processor->R[instruction.rtype.rs2];
                     break;
                 case 0x1:
                     // DIV
+                    {
+                        sWord dividend = (sWord)processor->R[instruction.rtype.rs1];
+                        sWord divisor = (sWord)processor->R[instruction.rtype.rs2];
+                        if (divisor == 0) {
+                            processor->R[instruction.rtype.rd] = 0xFFFFFFFF;
+                        } else {
+                            processor->R[instruction.rtype.rd] = (Word)(dividend / divisor);
+                        }
+                    }
                     break;
                 default:
                     handle_invalid_instruction(instruction);
@@ -104,9 +130,17 @@ void execute_rtype(Instruction instruction, Processor *processor) {
             switch (instruction.rtype.funct7) {
                 case 0x0:
                 // SRL      
+                    processor->R[instruction.rtype.rd] =
+                        processor->R[instruction.rtype.rs1] >> 
+                        (processor->R[instruction.rtype.rs2] & 0x1F);
                     break;
                 case 0x20:
                     // SRA
+                    {
+                        sWord value = (sWord)processor->R[instruction.rtype.rs1];
+                        int shift = processor->R[instruction.rtype.rs2] & 0x1F;
+                        processor->R[instruction.rtype.rd] = (Word)(value >> shift);
+                    }
                     break;
                 default:
                     handle_invalid_instruction(instruction);
@@ -118,9 +152,21 @@ void execute_rtype(Instruction instruction, Processor *processor) {
             switch (instruction.rtype.funct7) {
                 case 0x0:
                     // OR
+                    processor->R[instruction.rtype.rd] =
+                        processor->R[instruction.rtype.rs1] |
+                        processor->R[instruction.rtype.rs2];
                     break;
                 case 0x1:
                     // REM
+                    {
+                        sWord dividend = (sWord)processor->R[instruction.rtype.rs1];
+                        sWord divisor = (sWord)processor->R[instruction.rtype.rs2];
+                        if (divisor == 0) {
+                            processor->R[instruction.rtype.rd] = (Word)dividend;
+                        } else {
+                            processor->R[instruction.rtype.rd] = (Word)(dividend % divisor);
+                        }
+                    }
                     break;
                 default:
                     handle_invalid_instruction(instruction);
@@ -130,40 +176,90 @@ void execute_rtype(Instruction instruction, Processor *processor) {
             break;
         case 0x7:
             // AND
+            processor->R[instruction.rtype.rd] =
+                processor->R[instruction.rtype.rs1] &
+                processor->R[instruction.rtype.rs2];
             break;
         default:
             handle_invalid_instruction(instruction);
             exit(-1);
             break;
     }
+    processor->PC += 4;
 }
 
 void execute_itype_except_load(Instruction instruction, Processor *processor) {
     switch (instruction.itype.funct3) {
         case 0x0:
             // ADDI
+            {
+                int imm = sign_extend_number(instruction.itype.imm, 12);
+                processor->R[instruction.itype.rd] = 
+                    ((sWord)processor->R[instruction.itype.rs1]) + imm;
+            }
             break;
         case 0x1:
             // SLLI
+            processor->R[instruction.itype.rd] = 
+                processor->R[instruction.itype.rs1] << 
+                (instruction.itype.imm & 0x1F);
             break;
         case 0x2:
-            // STLI
+            // SLTI
+            {
+                int imm = sign_extend_number(instruction.itype.imm, 12);
+                processor->R[instruction.itype.rd] = 
+                    ((sWord)processor->R[instruction.itype.rs1] < imm) ? 1 : 0;
+            }
             break;
         case 0x4:
             // XORI
+            {
+                int imm = sign_extend_number(instruction.itype.imm, 12);
+                processor->R[instruction.itype.rd] = 
+                    processor->R[instruction.itype.rs1] ^ imm;
+            }
             break;
         case 0x5:
             // Shift Right (You must handle both logical and arithmetic)
+            {
+                int shift_amount = instruction.itype.imm & 0x1F;
+                int shift_type = instruction.itype.imm >> 10;
+                if (shift_type == 0x0) {
+                    // SRLI - logical right shift
+                    processor->R[instruction.itype.rd] = 
+                        processor->R[instruction.itype.rs1] >> shift_amount;
+                } else if (shift_type == 0x1) {
+                    // SRAI - arithmetic right shift
+                    sWord value = (sWord)processor->R[instruction.itype.rs1];
+                    processor->R[instruction.itype.rd] = (Word)(value >> shift_amount);
+                } else {
+                    handle_invalid_instruction(instruction);
+                    exit(-1);
+                }
+            }
+            break;
         case 0x6:
             // ORI
+            {
+                int imm = sign_extend_number(instruction.itype.imm, 12);
+                processor->R[instruction.itype.rd] = 
+                    processor->R[instruction.itype.rs1] | imm;
+            }
             break;
         case 0x7:
             // ANDI
+            {
+                int imm = sign_extend_number(instruction.itype.imm, 12);
+                processor->R[instruction.itype.rd] = 
+                    processor->R[instruction.itype.rs1] & imm;
+            }
             break;
         default:
             handle_invalid_instruction(instruction);
             break;
     }
+    processor->PC += 4;
 }
 
 void execute_ecall(Processor *p, Byte *memory) {
@@ -198,65 +294,191 @@ void execute_branch(Instruction instruction, Processor *processor) {
     switch (instruction.sbtype.funct3) {
         case 0x0:
             // BEQ
+            {
+                int offset = get_branch_offset(instruction);
+                if (processor->R[instruction.sbtype.rs1] == processor->R[instruction.sbtype.rs2]) {
+                    processor->PC += offset;
+                } else {
+                    processor->PC += 4;
+                }
+            }
             break;
         case 0x1:
             // BNE
+            {
+                int offset = get_branch_offset(instruction);
+                if (processor->R[instruction.sbtype.rs1] != processor->R[instruction.sbtype.rs2]) {
+                    processor->PC += offset;
+                } else {
+                    processor->PC += 4;
+                }
+            }
+            break;
+        case 0x4:
+            // BLT
+            {
+                int offset = get_branch_offset(instruction);
+                if ((sWord)processor->R[instruction.sbtype.rs1] < (sWord)processor->R[instruction.sbtype.rs2]) {
+                    processor->PC += offset;
+                } else {
+                    processor->PC += 4;
+                }
+            }
+            break;
+        case 0x5:
+            // BGE
+            {
+                int offset = get_branch_offset(instruction);
+                if ((sWord)processor->R[instruction.sbtype.rs1] >= (sWord)processor->R[instruction.sbtype.rs2]) {
+                    processor->PC += offset;
+                } else {
+                    processor->PC += 4;
+                }
+            }
             break;
         default:
             handle_invalid_instruction(instruction);
             exit(-1);
             break;
     }
+    processor->PC += 4;
 }
 
 void execute_load(Instruction instruction, Processor *processor, Byte *memory) {
     switch (instruction.itype.funct3) {
         case 0x0:
             // LB
+            {
+                int imm = sign_extend_number(instruction.itype.imm, 12);
+                Address addr = processor->R[instruction.itype.rs1] + imm;
+                processor->R[instruction.itype.rd] = load(memory, addr, LENGTH_BYTE);
+            }
             break;
         case 0x1:
             // LH
+            {
+                int imm = sign_extend_number(instruction.itype.imm, 12);
+                Address addr = processor->R[instruction.itype.rs1] + imm;
+                processor->R[instruction.itype.rd] = load(memory, addr, LENGTH_HALF_WORD);
+            }
             break;
         case 0x2:
             // LW
+            {
+                int imm = sign_extend_number(instruction.itype.imm, 12);
+                Address addr = processor->R[instruction.itype.rs1] + imm;
+                processor->R[instruction.itype.rd] = load(memory, addr, LENGTH_WORD);
+            }
             break;
         default:
             handle_invalid_instruction(instruction);
             break;
     }
+    processor->PC += 4;
 }
 
 void execute_store(Instruction instruction, Processor *processor, Byte *memory) {
     switch (instruction.stype.funct3) {
         case 0x0:
             // SB
+            {
+                int offset = get_store_offset(instruction);
+                Address addr = processor->R[instruction.stype.rs1] + offset;
+                store(memory, addr, LENGTH_BYTE, processor->R[instruction.stype.rs2]);
+            }
             break;
         case 0x1:
             // SH
+            {
+                int offset = get_store_offset(instruction);
+                Address addr = processor->R[instruction.stype.rs1] + offset;
+                store(memory, addr, LENGTH_HALF_WORD, processor->R[instruction.stype.rs2]);
+            }
             break;
         case 0x2:
             // SW
+            {
+                int offset = get_store_offset(instruction);
+                Address addr = processor->R[instruction.stype.rs1] + offset;
+                store(memory, addr, LENGTH_WORD, processor->R[instruction.stype.rs2]);
+            }
             break;
         default:
             handle_invalid_instruction(instruction);
             exit(-1);
             break;
     }
+    processor->PC += 4;
 }
 
 void execute_jal(Instruction instruction, Processor *processor) {
-    /* YOUR CODE HERE */
+    int offset = get_jump_offset(instruction);
+    processor->R[instruction.ujtype.rd] = processor->PC + 4;
+    processor->PC += offset;
 }
 
 void execute_lui(Instruction instruction, Processor *processor) {
-    /* YOUR CODE HERE */
+    processor->R[instruction.utype.rd] = instruction.utype.imm << 12;
+    processor->PC += 4;
 }
 
 void store(Byte *memory, Address address, Alignment alignment, Word value) {
-    /* YOUR CODE HERE */
+    if (address + alignment > MEMORY_SPACE) {
+        handle_invalid_write(address);
+        return;
+    }
+    
+    switch (alignment) {
+        case LENGTH_BYTE:
+            memory[address] = (Byte)(value & 0xFF);
+            break;
+        case LENGTH_HALF_WORD:
+            memory[address] = (Byte)(value & 0xFF);
+            memory[address + 1] = (Byte)((value >> 8) & 0xFF);
+            break;
+        case LENGTH_WORD:
+            memory[address] = (Byte)(value & 0xFF);
+            memory[address + 1] = (Byte)((value >> 8) & 0xFF);
+            memory[address + 2] = (Byte)((value >> 16) & 0xFF);
+            memory[address + 3] = (Byte)((value >> 24) & 0xFF);
+            break;
+        default:
+            handle_invalid_write(address);
+            break;
+    }
 }
 
 Word load(Byte *memory, Address address, Alignment alignment) {
-    /* YOUR CODE HERE */
-    return 0;
+    if (address + alignment > MEMORY_SPACE) {
+        handle_invalid_read(address);
+        return 0;
+    }
+    
+    Word value = 0;
+    switch (alignment) {
+        case LENGTH_BYTE:
+            value = (Word)memory[address];
+            // Sign extend byte
+            if (value & 0x80) {
+                value |= 0xFFFFFF00;
+            }
+            break;
+        case LENGTH_HALF_WORD:
+            value = (Word)memory[address] | ((Word)memory[address + 1] << 8);
+            // Sign extend half word
+            if (value & 0x8000) {
+                value |= 0xFFFF0000;
+            }
+            break;
+        case LENGTH_WORD:
+            value = (Word)memory[address] | 
+                    ((Word)memory[address + 1] << 8) |
+                    ((Word)memory[address + 2] << 16) |
+                    ((Word)memory[address + 3] << 24);
+            break;
+        default:
+            handle_invalid_read(address);
+            return 0;
+    }
+    return value;
 }
